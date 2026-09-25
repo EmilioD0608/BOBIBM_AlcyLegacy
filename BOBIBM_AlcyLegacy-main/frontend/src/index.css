@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #0B1220;
+  --panel: #101A2E;
+  --panel-2: #0D1626;
+  --grid: #1E2C47;
+  --grid-soft: #17223A;
+  --text: #E8EDF5;
+  --muted: #7C8BA8;
+  --muted-2: rgba(86, 98, 128, 0.3);
+  --blue: #4C7EFF;
+  --blue-dim: #2B4A99;
+  --red: #E8543E;
+  --amber: #E0A526;
+  --green: #3FB88A;
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'IBM Plex Sans', sans-serif;
+}
+
+html[data-theme="light"] {
+  --bg: #F2F4FA;
+  --panel: #FFFFFF;
+  --panel-2: #EBEEF6;
+  --grid: #D6DCE9;
+  --grid-soft: #E7EAF4;
+  --text: #12182A;
+  --muted: #57628A;
+  --muted-2: rgba(199, 207, 224, 0.4);
+  --blue: #3358CC;
+  --blue-dim: #A9C0F5;
+  --red: #C43F2B;
+  --amber: #A3730E;
+  --green: #1E8A63;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background:
+    linear-gradient(var(--grid-soft) 1px, transparent 1px) 0 0 / 32px 32px,
+    linear-gradient(90deg, var(--grid-soft) 1px, transparent 1px) 0 0 / 32px 32px,
+    var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.font-mono-custom {
+  font-family: var(--mono);
+}
+
+.topbar-bg {
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--grid);
+}
+
+.panel-custom {
+  background: var(--panel);
+  border: 1px solid var(--grid);
+}
+
+.panel-2-custom {
+  background: var(--panel-2);
+  border: 1px solid var(--grid);
+}
+
+/* Semáforo animation and styles */
+.tl-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #1a2540;
+  opacity: 0.35;
+  transition: all 0.2s ease;
+}
+.tl-dot.red.on {
+  background: var(--red);
+  opacity: 1;
+  box-shadow: 0 0 14px 2px rgba(232, 84, 62, 0.55);
+}
+.tl-dot.amber.on {
+  background: var(--amber);
+  opacity: 1;
+  box-shadow: 0 0 14px 2px rgba(224, 165, 38, 0.55);
+}
+.tl-dot.green.on {
+  background: var(--green);
+  opacity: 1;
+  box-shadow: 0 0 14px 2px rgba(63, 184, 138, 0.55);
+}
+
+@keyframes stampIn {
+  from {
+    transform: rotate(-4deg) scale(1.5);
+    opacity: 0;
+  }
+  to {
+    transform: rotate(-4deg) scale(1);
+    opacity: 1;
+  }
+}
+
+.stamp-anim {
+  animation: stampIn 0.35s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
