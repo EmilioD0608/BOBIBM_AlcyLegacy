@@ -1,3 +1,5 @@
+LEGACY_DISCOUNT = 0.15
+
 
 def calculate_price(base_price: float, customer_type: str = "regular") -> float:
     """Calcula el precio final aplicando la regla legacy de descuento."""

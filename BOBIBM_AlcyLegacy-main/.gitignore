@@ -1,0 +1,32 @@
+# Environment and Secret Files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node & Frontend
+node_modules/
+**/node_modules/
+dist/
+dist-ssr/
+vite.config.ts.timestamp-*
+
+# OS & Temp
+.DS_Store
+Thumbs.db
+.agents/
+tmp/
+temp/
