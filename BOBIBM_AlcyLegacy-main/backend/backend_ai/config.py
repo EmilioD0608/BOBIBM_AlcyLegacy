@@ -64,6 +64,14 @@ class Settings:
         default_factory=lambda: os.getenv("BOB_MOCK_WATSONX", "false").lower() in ("true", "1", "yes")
     )
 
+    # Groq configuration (free fallback — console.groq.com, no credit card required)
+    GROQ_API_KEY: str = field(
+        default_factory=lambda: os.getenv("GROQ_API_KEY") or ""
+    )
+    GROQ_MODEL_ID: str = field(
+        default_factory=lambda: os.getenv("GROQ_MODEL_ID") or "qwen/qwen3.8-27b"
+    )
+
     # Environment
     ENVIRONMENT: str = field(default_factory=lambda: os.getenv("ENVIRONMENT") or "development")
     SERVICE_NAME: str = "bob-backend"
