@@ -1,9 +1,32 @@
 """Core FastAPI application and authentication middleware for BOB Backend."""
 
+import importlib.util
+import os
 import secrets
+import sys
+from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+
+# ---------------------------------------------------------------------------
+# Setup sys.path and alias so standalone execution works seamlessly
+# ---------------------------------------------------------------------------
+_PKG_DIR = Path(__file__).resolve().parent
+for _p in [str(_PKG_DIR), str(_PKG_DIR.parent)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+if "backend" not in sys.modules:
+    _spec = importlib.util.spec_from_file_location(
+        "backend",
+        str(_PKG_DIR / "__init__.py"),
+        submodule_search_locations=[str(_PKG_DIR)],
+    )
+    if _spec and _spec.loader:
+        _mod = importlib.util.module_from_spec(_spec)
+        sys.modules["backend"] = _mod
+        _spec.loader.exec_module(_mod)
 
 from backend.api.routes_analyze import router as analyze_router
 from backend.api.routes_health import router as health_router
@@ -58,3 +81,10 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", "8000"))
+    host = os.getenv("HOST", "0.0.0.0")
+    print(f"Starting BOB Backend AI server on http://{host}:{port} ...")
+    uvicorn.run("main:app", host=host, port=port, reload=True)
