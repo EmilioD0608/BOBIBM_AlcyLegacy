@@ -1,4 +1,4 @@
-"""IBM watsonx.ai Provider pattern for code modernization."""
+"""IBM watsonx.ai / Groq Provider pattern for code modernization."""
 
 import abc
 import ast
@@ -423,13 +423,115 @@ class WatsonxProvider(BaseWatsonxProvider):
         return cleaned_code, changes
 
 
+class GroqProvider(BaseWatsonxProvider):
+    """Groq cloud provider using LLaMA/Mixtral models via OpenAI-compatible API.
+
+    Active when GROQ_API_KEY is set and IBM watsonx.ai credentials are absent.
+    Free tier available at console.groq.com — no credit card required.
+    """
+
+    GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model_id: Optional[str] = None,
+    ) -> None:
+        settings = get_settings()
+        self.api_key = api_key or settings.GROQ_API_KEY
+        self.model_id = model_id or settings.GROQ_MODEL_ID
+
+    def _sanitize_instructions(self, text: str) -> str:
+        """Strip prompt-injection patterns from user-supplied instructions."""
+        forbidden = re.compile(
+            r"(ignore\s+(all\s+)?(previous|prior|above)|forget\s+(all\s+)?|"
+            r"disregard\s+|override\s+|you\s+are\s+now|act\s+as\s+|"
+            r"system\s*prompt|new\s+instructions|forget\s+your)",
+            re.IGNORECASE,
+        )
+        return forbidden.sub("[REMOVED]", text).strip()[:1_000]
+
+    def _build_messages(self, original_code: str, user_specs: UserSpecs, file_path: str) -> List[Dict]:
+        """Builds the chat messages list for the Groq API."""
+        safe_instructions = self._sanitize_instructions(user_specs.customInstructions or "")
+        system_msg = (
+            "You are BOB (Alcy Legacy Engine), an enterprise software modernization AI. "
+            "Your objective is to refactor legacy Python code to modern enterprise standards "
+            "while strictly preserving 100% of the underlying business logic, mathematical "
+            "calculations, and public API signatures.\n"
+            "CRITICAL INSTRUCTIONS:\n"
+            "1. BUSINESS LOGIC PRESERVATION: Do NOT modify formulas or behaviors.\n"
+            "2. SYNTAX GUARANTEE: Output must be 100% syntactically valid Python.\n"
+            "3. SPECIFICATIONS: Use Python 3.12, strict PEP 484 typing, Google-style docstrings.\n"
+            "5. NO CONVERSATION: Return ONLY modern Python code inside ```python ... ``` blocks."
+        )
+        user_msg = (
+            f"Custom instructions: {safe_instructions or 'Standard modern Python'}.\n"
+            f"Target file: {file_path}\n\n"
+            "Legacy Code:\n"
+            "```python\n"
+            f"{original_code}\n"
+            "```\n\n"
+            "Refactored Code:"
+        )
+        return [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": user_msg},
+        ]
+
+    def generate_refactoring(
+        self,
+        original_code: str,
+        user_specs: UserSpecs,
+        file_path: str = "",
+    ) -> Tuple[str, List[str]]:
+        """Invokes Groq API to modernize code using LLaMA/Mixtral models."""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model_id,
+            "messages": self._build_messages(original_code, user_specs, file_path),
+            "max_tokens": 2048,
+            "temperature": 0.1,
+            "stop": ["### End"],
+        }
+
+        response = requests.post(self.GROQ_URL, json=payload, headers=headers, timeout=30.0)
+        response.raise_for_status()
+        data = response.json()
+
+        choices = data.get("choices", [])
+        if not choices:
+            raise RuntimeError("Groq returned empty generation response")
+
+        generated_raw = choices[0].get("message", {}).get("content", "")
+        cleaned_code = strip_markdown_code_blocks(generated_raw)
+
+        is_valid, error_msg = validate_python_syntax(cleaned_code, file_path=file_path)
+        if not is_valid:
+            raise ValueError(f"Groq produced invalid Python syntax: {error_msg}")
+
+        changes = [
+            "Tipado estricto PEP 484 añadido",
+            "Docstring descriptivo incorporado",
+            f"Modernización asistida por Groq ({self.model_id})",
+        ]
+        return cleaned_code, changes
+
+
 def get_watsonx_provider() -> BaseWatsonxProvider:
-    """Factory returning WatsonxProvider if credentials exist, otherwise MockWatsonxProvider."""
+    """Factory returning the best available provider.
+
+    Priority: WatsonxProvider → GroqProvider → MockWatsonxProvider (offline).
+    """
     settings = get_settings()
 
     if settings.BOB_MOCK_WATSONX:
         return MockWatsonxProvider()
 
+    # 1. Try IBM watsonx.ai first
     api_key = (
         os.getenv("BOB_API_KEY")
         or os.getenv("IBM_API_KEY")
@@ -440,7 +542,6 @@ def get_watsonx_provider() -> BaseWatsonxProvider:
         or os.getenv("BOB_PROJECT_ID")
         or settings.WATSONX_PROJECT_ID
     )
-
     if api_key and project_id:
         return WatsonxProvider(
             api_key=api_key,
@@ -449,4 +550,12 @@ def get_watsonx_provider() -> BaseWatsonxProvider:
             model_id=settings.WATSONX_MODEL_ID,
         )
 
+    # 2. Try Groq as fallback
+    if settings.GROQ_API_KEY:
+        return GroqProvider(
+            api_key=settings.GROQ_API_KEY,
+            model_id=settings.GROQ_MODEL_ID,
+        )
+
+    # 3. Offline AST-based modernization
     return MockWatsonxProvider()
