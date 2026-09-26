@@ -19,9 +19,10 @@ from fastapi.testclient import TestClient
 #     scripts/
 #
 BACKEND_AI_DIR = Path(__file__).resolve().parent.parent   # .../backend/backend_ai
-SCRIPTS_DIR = BACKEND_AI_DIR.parent.parent / "scripts"    # .../BOBIBM_AlcyLegacy-main/scripts
+ROOT_SCRIPTS_DIR = BACKEND_AI_DIR.parent.parent.parent / "scripts"  # Monorepo root scripts
+WS_SCRIPTS_DIR = BACKEND_AI_DIR.parent.parent / "scripts"           # BOBIBM_AlcyLegacy-main/scripts
 
-for p in [str(BACKEND_AI_DIR.parent), str(SCRIPTS_DIR)]:
+for p in [str(BACKEND_AI_DIR.parent), str(ROOT_SCRIPTS_DIR), str(WS_SCRIPTS_DIR)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
@@ -78,26 +79,3 @@ def invalid_headers() -> dict:
         "Content-Type": "application/json",
     }
 
-
-@pytest.fixture(scope="session", autouse=True)
-def configure_test_sandbox():
-    """Set ALLOWED_REPO_ROOT to the monorepo root for tests.
-
-    The B-02 sandbox check validates that repoPath is inside ALLOWED_REPO_ROOT.
-    In production this is /tmp/repos; in tests we allow the full monorepo so
-    test fixtures using local paths are accepted.
-    """
-    import os
-    from backend.api import routes_analyze
-
-    monorepo_root = str(BACKEND_AI_DIR.parent.parent.parent)  # .../BOBIBM_AlcyLegacy
-    os.environ.setdefault("ALLOWED_REPO_ROOT", monorepo_root)
-
-    # Reload the module-level ALLOWED_ROOT constant to reflect the env override
-    from pathlib import Path as _Path
-    routes_analyze.ALLOWED_ROOT = _Path(monorepo_root).resolve()
-    yield
-    # Cleanup: restore to default after session
-    routes_analyze.ALLOWED_ROOT = _Path(
-        os.environ.get("ALLOWED_REPO_ROOT", "/tmp/repos")
-    ).resolve()

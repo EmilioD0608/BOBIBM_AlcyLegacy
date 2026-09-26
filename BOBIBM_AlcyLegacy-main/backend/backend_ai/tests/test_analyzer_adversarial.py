@@ -558,13 +558,22 @@ def calcular_descuento_año_próximo(precio_base: float, categoría: str = "est�
     assert res.unresolved_globals == []
 
 
-def test_api_analyze_duplicate_target_files(auth_client):
+def test_api_analyze_duplicate_target_files(auth_client, tmp_path):
     """Verify duplicate entries in targetFiles are handled gracefully."""
+    high_risk_code = "\n".join([
+        "import os, sys, re, json, csv, math, time, io, abc, ast",
+        "import collections, itertools, functools, pathlib, datetime",
+        *[f"result_{i} = UNDEFINED_VAR_{i} + func_{i}()" for i in range(15)],
+    ])
+    repo_dir = tmp_path / "dup_repo"
+    repo_dir.mkdir()
+    (repo_dir / "target.py").write_text(high_risk_code, encoding="utf-8")
+
     resp = auth_client.post(
         "/internal/v1/analyze",
         json={
-            "repoPath": ".",
-            "targetFiles": ["scripts/legacy_module.py", "scripts/legacy_module.py"],
+            "repoPath": str(repo_dir),
+            "targetFiles": ["target.py", "target.py"],
         },
     )
     assert resp.status_code == 200
@@ -574,6 +583,7 @@ def test_api_analyze_duplicate_target_files(auth_client):
     for f in data["files"]:
         assert f["riskScore"] >= 70
         assert f["riskLevel"] == "high"
+
 
 
 def test_excluded_directories_in_repo_scan():

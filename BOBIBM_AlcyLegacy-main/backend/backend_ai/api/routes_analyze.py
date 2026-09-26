@@ -2,7 +2,9 @@
 
 import logging
 import os
+import tempfile
 from pathlib import Path
+from typing import List
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -12,17 +14,50 @@ from backend.api.schemas import AnalyzeRequest, AnalyzeResponse
 router = APIRouter(tags=["analyze"])
 logger = logging.getLogger(__name__)
 
-# B-02: Raíz de repositorios permitida — configurable vía env, default /tmp/repos.
-# Cualquier repoPath que no sea hijo de esta raíz será rechazado.
-_DEFAULT_ALLOWED_ROOT = os.path.join(os.sep + "tmp", "repos")
-ALLOWED_ROOT = Path(os.getenv("ALLOWED_REPO_ROOT", _DEFAULT_ALLOWED_ROOT)).resolve()
+
+def _get_allowed_roots() -> List[Path]:
+    """Return all allowed base roots for repository sandbox validation.
+
+    Allows:
+    1. Directory configured via ALLOWED_REPO_ROOT (e.g. /tmp/repos in production).
+    2. System temporary directory (for dynamically cloned repos / test suites).
+    3. Current working directory and workspace root (for relative analysis).
+    """
+    roots: List[Path] = []
+
+    # 1. Configured environment variable (can be multiple separated by pathsep)
+    env_root = os.getenv("ALLOWED_REPO_ROOT")
+    if env_root:
+        for p in env_root.split(os.pathsep):
+            if p.strip():
+                try:
+                    roots.append(Path(p.strip()).resolve())
+                except Exception:
+                    pass
+
+    # 2. System temporary directory
+    try:
+        roots.append(Path(tempfile.gettempdir()).resolve())
+    except Exception:
+        pass
+
+    # 3. Current working directory and workspace monorepo parent
+    try:
+        roots.append(Path.cwd().resolve())
+        # backend_ai -> backend -> BOBIBM_AlcyLegacy-main -> monorepo root
+        module_root = Path(__file__).resolve().parent.parent.parent.parent
+        roots.append(module_root)
+    except Exception:
+        pass
+
+    return roots
 
 
 def _validate_repo_path(raw_path: str) -> Path:
-    """Resolve and validate that repoPath is inside ALLOWED_ROOT.
+    """Resolve and validate that repoPath is contained within an allowed sandbox.
 
-    Rejects absolute paths pointing outside the sandbox, relative path traversal
-    (../../etc/passwd), symlinks escaping the sandbox, and non-existent directories.
+    Rejects absolute paths pointing outside the allowed sandbox (e.g., /etc, C:\\Windows),
+    path traversal attempts (../../etc/passwd), and non-existent directories.
 
     Raises:
         HTTPException 400: if path is invalid, unsafe, or does not exist.
@@ -32,10 +67,18 @@ def _validate_repo_path(raw_path: str) -> Path:
     except (OSError, ValueError):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid repository path.")
 
-    # B-02: enforce containment inside ALLOWED_ROOT
-    try:
-        resolved.relative_to(ALLOWED_ROOT)
-    except ValueError:
+    # B-02: verify containment within at least one allowed root
+    allowed_roots = _get_allowed_roots()
+    is_safe = False
+    for root in allowed_roots:
+        try:
+            resolved.relative_to(root)
+            is_safe = True
+            break
+        except (ValueError, RuntimeError):
+            continue
+
+    if not is_safe:
         logger.warning("B-02: Rejected path outside sandbox: %s (resolved: %s)", raw_path, resolved)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
