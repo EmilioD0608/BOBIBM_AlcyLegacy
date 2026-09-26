@@ -331,8 +331,26 @@ class WatsonxProvider(BaseWatsonxProvider):
         self._token_expiry = now + expires_in
         return self._iam_token
 
+    def _sanitize_instructions(self, text: str) -> str:
+        """Strip prompt-injection patterns from user-supplied instructions.
+
+        Removes sequences that attempt to redefine the model's role, override
+        its instructions, or inject system-level commands.
+        """
+        import re
+        forbidden = re.compile(
+            r"(ignore\s+(all\s+)?(previous|prior|above)|forget\s+(all\s+)?|"
+            r"disregard\s+|override\s+|you\s+are\s+now|act\s+as\s+|"
+            r"system\s*prompt|new\s+instructions|forget\s+your)",
+            re.IGNORECASE,
+        )
+        sanitized = forbidden.sub("[REMOVED]", text).strip()
+        return sanitized[:1_000]
+
     def _build_prompt(self, original_code: str, user_specs: UserSpecs, file_path: str) -> str:
         """Constructs specialized prompt enforcing modern Python standards."""
+        # B-04: sanitize user instructions before injecting into the prompt
+        safe_instructions = self._sanitize_instructions(user_specs.customInstructions or "")
         return (
             "You are BOB (Alcy Legacy Engine), an enterprise software modernization AI "
             "powered by IBM watsonx.ai.\n"
@@ -343,7 +361,7 @@ class WatsonxProvider(BaseWatsonxProvider):
             "1. BUSINESS LOGIC PRESERVATION: Do NOT modify formulas or behaviors.\n"
             "2. SYNTAX GUARANTEE: Output must be 100% syntactically valid Python (passing ast.parse).\n"
             "3. SPECIFICATIONS: Use Python 3.12, strict PEP 484 typing, and Google-style docstrings.\n"
-            f"4. CUSTOM INSTRUCTIONS: {user_specs.customInstructions or 'Standard modern Python'}.\n"
+            f"4. CUSTOM INSTRUCTIONS: {safe_instructions or 'Standard modern Python'}.\n"
             "5. NO CONVERSATION: Return ONLY modern Python code inside ```python ... ``` blocks.\n\n"
             f"Target File: {file_path}\n"
             "Legacy Code:\n"

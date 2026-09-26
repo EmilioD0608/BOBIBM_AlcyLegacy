@@ -22,10 +22,15 @@ class HealthResponse(BaseModel):
 class AnalyzeRequest(BaseModel):
     """Payload for POST /internal/v1/analyze."""
 
-    repoPath: str = Field(..., description="Root path of the repository to analyze")
+    repoPath: str = Field(
+        ...,
+        max_length=500,
+        description="Root path of the repository to analyze",
+    )
     targetFiles: List[str] = Field(
         default_factory=list,
-        description="List of relative file paths to inspect within repoPath",
+        max_length=200,
+        description="List of relative file paths to inspect within repoPath (max 200 files)",
     )
     scope: str = Field(
         default="file",
@@ -89,15 +94,25 @@ class UserSpecs(BaseModel):
     targetVersion: str = Field(default="3.12", description="Target language version")
     framework: str = Field(default="standard", description="Target framework or standard")
     customInstructions: Optional[str] = Field(
-        default="", description="Additional customization instructions"
+        default="",
+        max_length=1_000,
+        description="Additional customization instructions (max 1,000 chars)",
     )
 
 
 class RefactorRequest(BaseModel):
     """Payload for POST /internal/v1/refactor."""
 
-    filePath: str = Field(..., description="Relative path of file to modernize")
-    originalCode: str = Field(..., description="Original legacy source code")
+    filePath: str = Field(
+        ...,
+        max_length=500,
+        description="Relative path of file to modernize",
+    )
+    originalCode: str = Field(
+        ...,
+        max_length=50_000,
+        description="Original legacy source code (max 50,000 chars)",
+    )
     userSpecs: UserSpecs = Field(
         default_factory=UserSpecs, description="Modernization specifications"
     )

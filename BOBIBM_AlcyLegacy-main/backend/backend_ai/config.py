@@ -1,22 +1,41 @@
 """Configuration settings for BOB Backend."""
 
 import os
+import warnings
 from dataclasses import dataclass, field
 from functools import lru_cache
+
+
+def _resolve_internal_secret() -> str:
+    """Resolve the internal API secret from environment.
+
+    In production, raises RuntimeError if no secret is set.
+    In development, falls back to an insecure dev-only value with a warning.
+    """
+    secret = os.getenv("INTERNAL_API_SECRET") or os.getenv("BOB_INTERNAL_SECRET")
+    if secret:
+        return secret
+    env = os.getenv("ENVIRONMENT", "development").lower()
+    if env == "production":
+        raise RuntimeError(
+            "INTERNAL_API_SECRET environment variable is required in production. "
+            "Set it before starting the service."
+        )
+    # Development-only fallback — NOT safe for production
+    warnings.warn(
+        "INTERNAL_API_SECRET not set. Using insecure dev-only default. "
+        "DO NOT use in production.",
+        stacklevel=2,
+    )
+    return "dev_only_secret_do_not_use_in_prod"
 
 
 @dataclass
 class Settings:
     """Application configuration and credentials loaded from environment."""
 
-    # Internal API Secret for microservice-to-microservice authentication
-    INTERNAL_API_SECRET: str = field(
-        default_factory=lambda: (
-            os.getenv("INTERNAL_API_SECRET")
-            or os.getenv("BOB_INTERNAL_SECRET")
-            or "bob_secret_key_alcy_legacy_2026"
-        )
-    )
+    # Internal API Secret for microservice-to-microservice authentication (B-03)
+    INTERNAL_API_SECRET: str = field(default_factory=_resolve_internal_secret)
 
     # IBM watsonx.ai configuration
     WATSONX_APIKEY: str = field(

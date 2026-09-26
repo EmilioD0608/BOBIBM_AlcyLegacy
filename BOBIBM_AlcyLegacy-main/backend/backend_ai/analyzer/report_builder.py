@@ -1,12 +1,6 @@
-"""Report builder orchestrator for BOB Backend static risk diagnostics.
-
-Orchestrates AST dependency scanning, unit test coverage checking, git age inspection,
-and risk score calculation across single files or repository trees.
-Produces structured response adhering to AnalyzeResponse schema in COORDINACION_BACKENDS.md.
-"""
-
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import List, Optional, Union
@@ -21,6 +15,7 @@ from backend.api.schemas import (
     FileAnalysisResult,
 )
 
+logger = logging.getLogger(__name__)
 
 EXCLUDED_DIRS = {
     ".git",
@@ -61,14 +56,14 @@ def build_analysis_report(
     """Orchestrates risk diagnostic analysis across target files or repository.
 
     Args:
-        repo_path: Root filesystem path of the repository.
+        repo_path: Root filesystem path of the repository (already sandboxed by the route).
         target_files: Optional list of relative file paths to inspect.
         scope: Scope of analysis ("file", "folder", or "repo").
 
     Returns:
         AnalyzeResponse with overall summary and per-file metrics.
     """
-    repo_root = Path(repo_path)
+    repo_root = Path(repo_path).resolve()
     files_to_analyze: List[str] = []
 
     if target_files and len(target_files) > 0:
@@ -80,10 +75,18 @@ def build_analysis_report(
 
     for rel_path_str in files_to_analyze:
         target_p = Path(rel_path_str)
-        if not target_p.is_absolute() and repo_root.exists():
-            full_file_path = repo_root / target_p
-        else:
-            full_file_path = target_p
+
+        # B-02: always resolve relative to repo_root; reject any path that escapes it.
+        full_file_path = (repo_root / target_p).resolve()
+        try:
+            full_file_path.relative_to(repo_root)
+        except ValueError:
+            logger.warning(
+                "B-02: Skipping targetFile outside repo sandbox: %s (resolved: %s)",
+                rel_path_str,
+                full_file_path,
+            )
+            continue
 
         # 1. Dependency and AST scan
         dep_res = scan_dependencies(full_file_path, repo_path=repo_root)
