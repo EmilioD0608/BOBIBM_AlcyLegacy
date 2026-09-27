@@ -4916,7 +4916,19 @@ Generado por el prototipo Alcy Legacy (IBM Bob 2.0 Hackathon).
       let refactorFilePath = f.name;
       let refactorOriginalCode = null;
       let isLocalRefactor = false;
+      if (mode === 'demo') {
+        isLocalRefactor = true;
 
+        const demoFile = currentDemoKey
+          ? FILES[currentDemoKey]
+          : null;
+
+        refactorFilePath =
+          demoFile?.name || f.name;
+
+        refactorOriginalCode =
+          demoFile?.source || null;
+      }
       if (mode === 'real' && scope === 'file') {
         isLocalRefactor = true;
 
@@ -5546,9 +5558,16 @@ Generado por el prototipo Alcy Legacy (IBM Bob 2.0 Hackathon).
       const hint = document.createElement('div');
       hint.className = 'hint';
       hint.textContent = guardianMode === 'off'
-        ? (isEnC ? 'This is the default behavior of an AI assistant with no risk-evaluation layer.' : 'Este es el comportamiento por defecto de un asistente de IA sin capa de evaluación de riesgo.')
-        : (isEnC ? 'Alcy Legacy adds this checkpoint as a Skill on top of Bob (auto-activated, no manual mode switch), using /init, rules and deterministic analysis before delegating the change to Agent mode.' : 'Alcy Legacy añade este checkpoint como un Skill sobre Bob (activado automáticamente, sin cambiar de modo a mano), usando /init, reglas y análisis determinista antes de delegar el cambio a Agent mode.');
-      c.appendChild(hint);
+        ? (
+          isEnC
+            ? 'BOB performs the change directly without the Legacy Guardian risk-evaluation layer.'
+            : 'BOB realiza el cambio directamente sin la capa de evaluación de riesgos de Legacy Guardian.'
+        )
+        : (
+          isEnC
+            ? 'Alcy Legacy acts as a security checkpoint before BOB. It analyzes code risks and blockers and then automatically delegates the refactoring to BOB.'
+            : 'Alcy Legacy actúa como un checkpoint de seguridad antes de BOB. Analiza los riesgos y bloqueadores del código y luego delega automáticamente la refactorización a BOB.'
+        );
     }
 
     applyI18n();
