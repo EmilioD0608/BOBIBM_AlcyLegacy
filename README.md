@@ -112,7 +112,7 @@ Legacy Guardian funciona como un **checkpoint previo a la refactorización**.
                   │ Legacy Guardian │
                   └────────┬────────┘
                            ↓
-             Risk Score + Bloqueadores
+                Risk Score + Bloqueadores
                            ↓
                   ┌─────────────────┐
                   │       BOB       │
