@@ -98,6 +98,8 @@ POST /internal/v1/refactor
 ```
 
 ---
+<img width="1919" height="1079" alt="image1" src="https://github.com/user-attachments/assets/76a031ff-7058-4459-b625-47f288191ca4" />
+
 
 ## 🛡️ Legacy Guardian
 
@@ -231,7 +233,7 @@ Si GitHub requiere confirmación adicional, el usuario puede continuar el proces
 
 | Componente | Tecnologías |
 |---|---|
-| 🌐 **Frontend** | HTML, CSS, JavaScript |
+| 🌐 **Frontend** | HTML, CSS, JavaScript, TypeScript |
 | ⚙️ **Backend General** | Node.js, TypeScript, Express |
 | 🧠 **Backend IA** | Python, FastAPI, BOB |
 | 🗄️ **Base de datos** | PostgreSQL |
