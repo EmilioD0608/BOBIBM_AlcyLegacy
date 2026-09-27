@@ -37,7 +37,26 @@ class AnalyzeRequest(BaseModel):
         description="Scope of analysis: 'file', 'folder', or 'repo'",
     )
 
+class FileDocumentation(BaseModel):
+    """Structural documentation extracted from the analyzed source file."""
 
+    functions: List[str] = Field(
+        default_factory=list,
+        description="Functions detected in the source file",
+    )
+    classes: List[str] = Field(
+        default_factory=list,
+        description="Classes detected in the source file",
+    )
+    imports: List[str] = Field(
+        default_factory=list,
+        description="Import statements detected in the source file",
+    )
+    lines: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of lines in the source file",
+    )
 class FileAnalysisResult(BaseModel):
     """Analysis metrics and risk score for an individual file."""
 
@@ -60,6 +79,10 @@ class FileAnalysisResult(BaseModel):
     )
     recommendation: str = Field(
         ..., description="Actionable recommendation before or for refactoring"
+    )
+    documentation: FileDocumentation = Field(
+        default_factory=FileDocumentation,
+        description="Structural documentation extracted from the analyzed source file",
     )
 
 

@@ -12,7 +12,9 @@ import requests
 from backend.api.schemas import UserSpecs
 from backend.config import get_settings
 from backend.refactor.validator import strip_markdown_code_blocks, validate_python_syntax
-
+print("=== PROVIDER CARGADO DESDE ===")
+print(__file__)
+print("=============================")
 
 class BaseWatsonxProvider(abc.ABC):
     """Abstract base provider for IBM watsonx.ai code modernization."""
@@ -24,17 +26,166 @@ class BaseWatsonxProvider(abc.ABC):
         user_specs: UserSpecs,
         file_path: str = "",
     ) -> Tuple[str, List[str]]:
-        """Modernizes legacy source code according to user specifications.
+        """Invokes Groq API to modernize code using the configured model.
 
-        Args:
-            original_code: Original legacy source code.
-            user_specs: User-defined modernization specifications.
-            file_path: Optional relative path of the file.
-
-        Returns:
-            Tuple of (refactored_code: str, changes_summary: list[str]).
+        Large source files are rejected before reaching Groq so the
+        RefactorEngine can safely activate its offline fallback instead
+        of receiving an HTTP 413 Payload Too Large response.
         """
-        raise NotImplementedError
+
+        # ----------------------------------------------------------
+        # Protect Groq from excessively large source files
+        # ----------------------------------------------------------
+        print(">>> ENTRANDO AL GROQ PROVIDER MODIFICADO <<<")
+
+        MAX_GROQ_SOURCE_CHARS = 40_000
+
+        source_size = len(original_code)
+
+        print(
+            f"Groq source size: {source_size} characters"
+        )
+
+        if source_size > MAX_GROQ_SOURCE_CHARS:
+            raise ValueError(
+                "Source file too large for Groq fallback "
+                f"({source_size} characters; "
+                f"limit: {MAX_GROQ_SOURCE_CHARS})."
+            )
+
+        # ----------------------------------------------------------
+        # Validate Groq configuration
+        # ----------------------------------------------------------
+
+        if not self.api_key:
+            raise RuntimeError(
+                "GROQ_API_KEY is not configured."
+            )
+
+        if not self.model_id:
+            raise RuntimeError(
+                "GROQ_MODEL_ID is not configured."
+            )
+
+        # ----------------------------------------------------------
+        # Build HTTP request
+        # ----------------------------------------------------------
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        messages = self._build_messages(
+            original_code=original_code,
+            user_specs=user_specs,
+            file_path=file_path,
+        )
+
+        payload = {
+            "model": self.model_id,
+            "messages": messages,
+            "max_tokens": 2048,
+            "temperature": 0.1,
+            "stop": ["### End"],
+        }
+
+        # ----------------------------------------------------------
+        # Send request to Groq
+        # ----------------------------------------------------------
+
+        response = requests.post(
+            self.GROQ_URL,
+            json=payload,
+            headers=headers,
+            timeout=30.0,
+        )
+
+        # ----------------------------------------------------------
+        # Handle common Groq errors with clearer messages
+        # ----------------------------------------------------------
+
+        if response.status_code == 413:
+            raise RuntimeError(
+                "Groq rejected the request because the payload "
+                "was too large."
+            )
+
+        if response.status_code == 429:
+            raise RuntimeError(
+                "Groq rate limit or quota was exceeded."
+            )
+
+        if response.status_code == 401:
+            raise RuntimeError(
+                "Groq rejected the configured API key."
+            )
+
+        response.raise_for_status()
+
+        # ----------------------------------------------------------
+        # Parse response
+        # ----------------------------------------------------------
+
+        data = response.json()
+
+        choices = data.get("choices", [])
+
+        if not choices:
+            raise RuntimeError(
+                "Groq returned empty generation response."
+            )
+
+        generated_raw = (
+            choices[0]
+            .get("message", {})
+            .get("content", "")
+        )
+
+        if not generated_raw.strip():
+            raise RuntimeError(
+                "Groq returned empty generated code."
+            )
+
+        # ----------------------------------------------------------
+        # Extract Python code
+        # ----------------------------------------------------------
+
+        cleaned_code = strip_markdown_code_blocks(
+            generated_raw
+        )
+
+        if not cleaned_code.strip():
+            raise RuntimeError(
+                "Groq generated code could not be extracted."
+            )
+
+        # ----------------------------------------------------------
+        # Validate generated Python
+        # ----------------------------------------------------------
+
+        is_valid, error_msg = validate_python_syntax(
+            cleaned_code,
+            file_path=file_path,
+        )
+
+        if not is_valid:
+            raise ValueError(
+                "Groq produced invalid Python syntax: "
+                f"{error_msg}"
+            )
+
+        # ----------------------------------------------------------
+        # Build change summary
+        # ----------------------------------------------------------
+
+        changes = [
+            "Tipado estricto PEP 484 añadido",
+            "Docstring descriptivo incorporado",
+            f"Modernización asistida por Groq ({self.model_id})",
+        ]
+
+        return cleaned_code, changes
 
 
 class MockWatsonxProvider(BaseWatsonxProvider):
@@ -295,7 +446,6 @@ class WatsonxProvider(BaseWatsonxProvider):
         settings = get_settings()
         self.api_key = (
             api_key
-            or os.getenv("BOB_API_KEY")
             or os.getenv("IBM_API_KEY")
             or settings.WATSONX_APIKEY
         )
@@ -322,7 +472,30 @@ class WatsonxProvider(BaseWatsonxProvider):
             "apikey": self.api_key,
         }
 
-        response = requests.post(self.IAM_URL, data=data, headers=headers, timeout=10.0)
+        print("=== WATSONX DEBUG ===")
+        print("IAM URL:", self.IAM_URL)
+        print("API key cargada:", bool(self.api_key))
+        print(
+            "Longitud API key:",
+            len(self.api_key) if self.api_key else 0
+        )
+        print("Project ID cargado:", bool(self.project_id))
+        print("Watsonx URL:", self.url)
+        print("Model ID:", self.model_id)
+        print("======================")
+        response = requests.post(
+            self.IAM_URL,
+            data=data,
+            headers=headers,
+            timeout=10.0,
+        )
+
+        print("=== IBM IAM RESPONSE ===")
+        print("Status:", response.status_code)
+        print("Content-Type:", response.headers.get("Content-Type"))
+        print("Body:", response.text[:2000])
+        print("========================")
+
         response.raise_for_status()
         payload = response.json()
 
@@ -485,41 +658,120 @@ class GroqProvider(BaseWatsonxProvider):
         user_specs: UserSpecs,
         file_path: str = "",
     ) -> Tuple[str, List[str]]:
-        """Invokes Groq API to modernize code using LLaMA/Mixtral models."""
+        """
+        Invokes Groq API to modernize code.
+
+        Large source files are rejected before reaching Groq so the
+        RefactorEngine can activate its offline fallback instead of
+        receiving an HTTP 413 Payload Too Large response.
+        """
+
+        # ----------------------------------------------------------
+        # 1. Validate source size before calling Groq
+        # ----------------------------------------------------------
+
+        MAX_GROQ_SOURCE_CHARS = 40_000
+
+        source_size = len(original_code)
+
+        print(
+            f"Groq source size: {source_size} characters"
+        )
+
+        if source_size > MAX_GROQ_SOURCE_CHARS:
+            raise ValueError(
+                "Source file too large for Groq fallback "
+                f"({source_size} characters; "
+                f"limit: {MAX_GROQ_SOURCE_CHARS})."
+            )
+
+        # ----------------------------------------------------------
+        # 2. Prepare Groq request
+        # ----------------------------------------------------------
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+
         payload = {
             "model": self.model_id,
-            "messages": self._build_messages(original_code, user_specs, file_path),
+            "messages": self._build_messages(
+                original_code,
+                user_specs,
+                file_path,
+            ),
             "max_tokens": 2048,
             "temperature": 0.1,
             "stop": ["### End"],
         }
 
-        response = requests.post(self.GROQ_URL, json=payload, headers=headers, timeout=30.0)
-        response.raise_for_status()
+        # ----------------------------------------------------------
+        # 3. Call Groq
+        # ----------------------------------------------------------
+
+        response = requests.post(
+            self.GROQ_URL,
+            json=payload,
+            headers=headers,
+            timeout=30.0,
+        )
+
+        if not response.ok:
+            raise RuntimeError(
+                f"Groq HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+
         data = response.json()
 
+        # ----------------------------------------------------------
+        # 4. Validate Groq response
+        # ----------------------------------------------------------
+
         choices = data.get("choices", [])
+
         if not choices:
-            raise RuntimeError("Groq returned empty generation response")
+            raise RuntimeError(
+                "Groq returned empty generation response"
+            )
 
-        generated_raw = choices[0].get("message", {}).get("content", "")
-        cleaned_code = strip_markdown_code_blocks(generated_raw)
+        generated_raw = (
+            choices[0]
+            .get("message", {})
+            .get("content", "")
+        )
 
-        is_valid, error_msg = validate_python_syntax(cleaned_code, file_path=file_path)
+        cleaned_code = strip_markdown_code_blocks(
+            generated_raw
+        )
+
+        # ----------------------------------------------------------
+        # 5. Validate generated Python
+        # ----------------------------------------------------------
+
+        is_valid, error_msg = validate_python_syntax(
+            cleaned_code,
+            file_path=file_path,
+        )
+
         if not is_valid:
-            raise ValueError(f"Groq produced invalid Python syntax: {error_msg}")
+            raise ValueError(
+                "Groq produced invalid Python syntax: "
+                f"{error_msg}"
+            )
+
+        # ----------------------------------------------------------
+        # 6. Return generated code
+        # ----------------------------------------------------------
 
         changes = [
             "Tipado estricto PEP 484 añadido",
             "Docstring descriptivo incorporado",
             f"Modernización asistida por Groq ({self.model_id})",
         ]
-        return cleaned_code, changes
 
+        return cleaned_code, changes
 
 def get_watsonx_provider() -> BaseWatsonxProvider:
     """Factory returning the best available provider.
@@ -527,14 +779,12 @@ def get_watsonx_provider() -> BaseWatsonxProvider:
     Priority: WatsonxProvider → GroqProvider → MockWatsonxProvider (offline).
     """
     settings = get_settings()
-
     if settings.BOB_MOCK_WATSONX:
         return MockWatsonxProvider()
 
     # 1. Try IBM watsonx.ai first
     api_key = (
-        os.getenv("BOB_API_KEY")
-        or os.getenv("IBM_API_KEY")
+        os.getenv("IBM_API_KEY")
         or settings.WATSONX_APIKEY
     )
     project_id = (
