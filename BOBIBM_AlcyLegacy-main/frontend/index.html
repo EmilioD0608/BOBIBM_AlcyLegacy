@@ -1858,6 +1858,7 @@
         </div>
         <div class="theme-toggle" id="themeToggle" title="Cambiar tema">🌙</div>
       </div>
+      <div class="topbar-auth" id="githubArea"></div>
       <div class="topbar-auth" id="authArea">
         <button class="btn-ghost" id="loginBtn" data-i18n="nav.login">Iniciar sesión</button>
         <button class="btn-solid" id="signupBtn" data-i18n="nav.signup">Registrarse</button>
@@ -2520,8 +2521,7 @@
         'score.failProb': 'probabilidad de fallo',
         'reason.title': 'Razón del score:',
         'ai.label': '🤖 Explicación en lenguaje natural',
-        'ai.note': 'Generado por plantilla a partir de las métricas calculadas en este prototipo. En producción, Bob generaría esta explicación dinámicamente en lenguaje natural.',
-        'doc.generated': 'Documentación generada del archivo',
+        'ai.note': 'Explicación generada a partir de las métricas y resultados obtenidos por BOB durante el análisis del código.', 'doc.generated': 'Documentación generada del archivo',
         'doc.funcsFound': 'Funciones y clases detectadas', 'doc.noFuncsFound': 'No se detectaron funciones/clases con el patrón usado.',
         'doc.importsFound': 'Imports detectados', 'doc.noImports': 'No se detectaron imports.',
         'doc.externalLibs': 'Librerías externas', 'doc.flagged': 'marcada(s) ⚠', 'doc.noLibs': 'No se detectaron librerías externas en los imports.',
@@ -2581,8 +2581,7 @@
         'score.failProb': 'failure probability',
         'reason.title': 'Score breakdown:',
         'ai.label': '🤖 Natural language explanation',
-        'ai.note': 'Generated from a template based on the metrics computed in this prototype. In production, Bob would generate this explanation dynamically in natural language.',
-        'doc.generated': 'Generated documentation for this file',
+        'ai.note': 'Explanation generated from the metrics and results obtained by BOB during code analysis.', 'doc.generated': 'Generated documentation for this file',
         'doc.funcsFound': 'Functions and classes detected', 'doc.noFuncsFound': 'No functions/classes detected with the pattern used.',
         'doc.importsFound': 'Imports detected', 'doc.noImports': 'No imports detected.',
         'doc.externalLibs': 'External libraries', 'doc.flagged': 'flagged ⚠', 'doc.noLibs': 'No external libraries detected in the imports.',
@@ -2759,14 +2758,17 @@
     let analysisComplete = false;
     let currentAnalyzed = null;
     let currentUser = null;
-
+    let currentJobId = null;
     let targetFile = { name: null, content: null };
     let depFiles = [];
     let testFiles = [];
     let folderAllFiles = [];
-
+    let currentPullRequestUrl = null;
+    let currentPullRequestRequiresConfirmation = false;
+    let githubConnection = null;
     // ID del repositorio guardado en PostgreSQL
     let ghRepositoryId = null;
+    let ghTargetPath = '';
     /* ---------------- LOGIN MODAL ---------------- */
     /* ---------------- LOGIN MODAL ---------------- */
 
@@ -2967,6 +2969,10 @@
 
           renderAuthArea();
 
+
+          await checkGitHubConnection();
+
+
           document.getElementById('modalEmail').value = '';
           document.getElementById('modalPassword').value = '';
 
@@ -3125,12 +3131,13 @@
           viaGoogle: true
         };
 
-        renderAuthArea();
-
         document.getElementById('modalEmail').value = '';
         document.getElementById('modalPassword').value = '';
 
         modalOverlay.classList.remove('open');
+
+        renderAuthArea();
+        await checkGitHubConnection();
 
       } catch (error) {
         console.error(
@@ -3196,8 +3203,14 @@
           removeAuthToken();
 
           currentUser = null;
+          githubConnection = null;
+
+          currentJobId = null;
+          currentPullRequestUrl = null;
+          currentPullRequestRequiresConfirmation = false;
 
           renderAuthArea();
+          renderGitHubArea();
         };
 
       } else {
@@ -3228,7 +3241,11 @@
 
       if (!token) {
         currentUser = null;
+        githubConnection = null;
+
         renderAuthArea();
+        renderGitHubArea();
+
         return;
       }
 
@@ -3244,8 +3261,13 @@
 
         if (!response.ok) {
           removeAuthToken();
+
           currentUser = null;
+          githubConnection = null;
+
           renderAuthArea();
+          renderGitHubArea();
+
           return;
         }
 
@@ -3276,12 +3298,29 @@
         removeAuthToken();
 
         currentUser = null;
+        githubConnection = null;
+        renderGitHubArea();
 
         renderAuthArea();
       }
     }
 
-    restoreSession();
+    restoreSession()
+      .then(() => {
+        if (currentUser) {
+          return checkGitHubConnection();
+        }
+
+        renderGitHubArea();
+      })
+      .catch(error => {
+        console.error(
+          'Error inicializando la sesión:',
+          error
+        );
+      });
+
+    /* ---------------- MODE SWITCH (demo / real) ---------------- */
     /* ---------------- MODE SWITCH (demo / real) ---------------- */
     document.getElementById('modeDemoBtn').onclick = () => switchMode('demo');
     document.getElementById('modeRealBtn').onclick = () => switchMode('real');
@@ -3560,6 +3599,8 @@
 
         ghTargetName =
           data.targetFile.name;
+
+        ghTargetPath = filePath;
 
         ghOtherFiles =
           Array.isArray(data.otherFiles)
@@ -3943,8 +3984,8 @@
                       : 'GITHUB',
 
                   userSpecifications: {
-                    targetFile: name,
-                    scope: 'github',
+                    targetFile: ghTargetPath,
+                    scope: 'file',
                     documentationOnly:
                       docOnly
                   }
@@ -3967,6 +4008,186 @@
               'No se pudo crear el trabajo de análisis.'
             );
           }
+
+          // ======================================================
+          // ANALIZAR JOB CON API_E -> BOB
+          // ======================================================
+
+          const jobId = jobData.job?.id;
+
+          if (!jobId) {
+            throw new Error(
+              'No se recibió el ID del trabajo.'
+            );
+          }
+
+          currentJobId = jobId;
+
+          const analyzeResponse =
+            await fetch(
+              `${API_BASE_URL}/jobs/${jobId}/analyze`,
+              {
+                method: 'POST',
+
+                headers: {
+                  'Authorization':
+                    `Bearer ${token}`
+                }
+              }
+            );
+
+          const analyzeData =
+            await analyzeResponse.json();
+
+          if (!analyzeResponse.ok) {
+            if (analyzeResponse.status === 401) {
+              localStorage.removeItem(
+                AUTH_TOKEN_KEY
+              );
+            }
+
+            throw new Error(
+              analyzeData.error ||
+              'No se pudo analizar el repositorio.'
+            );
+          }
+
+          console.log(
+            'Resultado real de BOB:',
+            analyzeData
+          );
+
+          // ======================================================
+          // MOSTRAR RESULTADO REAL DE BOB
+          // ======================================================
+
+          const bobFile =
+            analyzeData.analysis?.files?.[0];
+
+          if (!bobFile) {
+            throw new Error(
+              'BOB no devolvió información del archivo analizado.'
+            );
+          }
+
+          const bobDocumentation =
+            bobFile.documentation;
+
+
+          const docs = bobDocumentation
+            ? {
+              funcs:
+                bobDocumentation.functions || [],
+
+              classes:
+                bobDocumentation.classes || [],
+
+              imports:
+                bobDocumentation.imports || [],
+
+              lines:
+                bobDocumentation.lines || 0
+            }
+            : extractDocumentation(
+              content || ''
+            );
+
+          const libs =
+            extractExternalLibs(
+              docs.imports
+            );
+
+          const bobAgeDays =
+            parseInt(bobFile.age, 10) || 0;
+
+          // BOB devuelve el número de dependencias.
+          // renderAnalysis necesita un arreglo para dibujar el mapa.
+          // Conservamos los archivos detectados por el frontend
+          // cuando estén disponibles.
+          let bobDeps = deps;
+
+          if (
+            bobDeps.length === 0 &&
+            bobFile.dependencies > 0
+          ) {
+            bobDeps = Array.from(
+              {
+                length: Math.min(
+                  bobFile.dependencies,
+                  5
+                )
+              },
+              (_, index) =>
+                `Dependencia ${index + 1}`
+            );
+          }
+
+          // BOB devuelve coverage como "30%", "0%", etc.
+          const coverageNumber =
+            parseFloat(
+              String(
+                bobFile.coverage || '0'
+              ).replace('%', '')
+            ) || 0;
+
+          const bobHasTests =
+            coverageNumber > 0;
+
+          renderAnalysis({
+            name:
+              bobFile.filePath ||
+              ghTargetName ||
+              name,
+
+            deps:
+              bobDeps,
+
+            hasTests:
+              bobHasTests,
+
+            ageDays:
+              bobAgeDays,
+
+            risk:
+              bobFile.riskLevel,
+
+            reasons:
+              Array.isArray(bobFile.blockers) &&
+                bobFile.blockers.length > 0
+                ? bobFile.blockers
+                : [
+                  bobFile.recommendation ||
+                  'BOB no detectó bloqueadores específicos.'
+                ],
+
+            score:
+              bobFile.riskScore,
+
+            docs,
+            libs,
+
+            isReal: true,
+
+            docOnly,
+
+            ghNoAge: false,
+
+            safeToRefactorDirectly:
+              bobFile.safeToRefactorDirectly,
+
+            recommendation:
+              bobFile.recommendation,
+
+            coverage:
+              bobFile.coverage,
+
+            dependenciesCount:
+              bobFile.dependencies
+          });
+
+          // GitHub ya fue renderizado con datos reales de BOB.
+          // No continuar hacia computeRisk().
+          return;
 
 
         }
@@ -4053,7 +4274,25 @@
       }
     }
     function buildNaturalExplanation(data) {
-      const { name, deps, hasTests, ageDays, ghNoAge, libs } = data;
+      const {
+        name,
+        deps,
+        hasTests,
+        ageDays,
+        risk,
+        reasons,
+        score,
+        docs,
+        libs,
+        isReal,
+        isDemo,
+        docOnly,
+        ghNoAge,
+        coverage,
+        dependenciesCount
+      } = data;
+      const realDepCount =
+        dependenciesCount ?? deps.length;
       const isEn = currentLang === 'en';
       const parts = [];
       if (!ghNoAge && ageDays > 0) {
@@ -4067,10 +4306,12 @@
       parts.push(isEn
         ? (hasTests ? 'it does have tests covering it' : "it doesn't have unit tests covering it")
         : (hasTests ? 'sí cuenta con tests que lo cubren' : 'no tiene tests unitarios que lo cubran'));
-      if (deps.length > 0) {
-        parts.push(isEn
-          ? `${deps.length} file${deps.length > 1 ? 's' : ''} depend${deps.length > 1 ? '' : 's'} on it, so a change could propagate silently`
-          : `${deps.length} archivo${deps.length > 1 ? 's' : ''} depende${deps.length > 1 ? 'n' : ''} de él, así que un cambio puede propagarse silenciosamente`);
+      if (realDepCount > 0) {
+        parts.push(
+          isEn
+            ? `${realDepCount} file${realDepCount > 1 ? 's' : ''} depend${realDepCount > 1 ? '' : 's'} on it, so a change could propagate silently`
+            : `${realDepCount} archivo${realDepCount > 1 ? 's' : ''} depende${realDepCount > 1 ? 'n' : ''} de él, así que un cambio puede propagarse silenciosamente`
+        );
       }
       const flagged = (libs || []).filter(l => l.flagged);
       if (flagged.length > 0) {
@@ -4084,9 +4325,27 @@
     }
 
     function renderAnalysis(data) {
-      const { name, deps, hasTests, ageDays, risk, reasons, score, docs, libs, isReal, isDemo, docOnly, ghNoAge } = data;
+      const {
+        name,
+        deps,
+        hasTests,
+        ageDays,
+        risk,
+        reasons,
+        score,
+        docs,
+        libs,
+        isReal,
+        isDemo,
+        docOnly,
+        ghNoAge,
+        coverage,
+        dependenciesCount,
+        recommendation
+      } = data;
       const results = document.getElementById('analysisResults');
-      const depCount = deps.length;
+      const depCount =
+        dependenciesCount ?? deps.length;
       const libsList = libs || [];
       const flaggedLibs = libsList.filter(l => l.flagged);
 
@@ -4094,7 +4353,7 @@
       const svgHeight = 260;
       const safeShortName = escapeHtml(name.split('.')[0].slice(0, 16));
       let svgNodes = '', svgLines = '';
-      if (depCount === 0) {
+      if (deps.length === 0) {
         svgNodes = `<circle cx="${cx}" cy="${cy}" r="26" fill="none" stroke="#3FB88A" stroke-width="1.5"/>
       <text x="${cx}" y="${cy + 5}" text-anchor="middle" class="node-label-target">${safeShortName}</text>`;
       } else {
@@ -4139,8 +4398,14 @@
       </div>
       <div class="stat">
         <div class="stat-label">${t['stat.testCoverage']}</div>
-        <div class="stat-value ${hasTests ? 'ok' : 'crit'}">${hasTests ? (isEnL ? '✓ YES' : '✓ SÍ') : '0%'}</div>
-        <div class="stat-sub">${hasTests ? t['stat.protected'] : t['stat.noTests']}</div>
+
+        <div class="stat-value ${hasTests ? 'ok' : 'crit'}">
+          ${coverage || (hasTests ? (isEnL ? '✓ YES' : '✓ SÍ') : '0%')}
+        </div>
+
+        <div class="stat-sub">
+          ${hasTests ? t['stat.protected'] : t['stat.noTests']}
+        </div>
       </div>
       <div class="stat">
         <div class="stat-label">${t['stat.lastChange']}</div>
@@ -4165,7 +4430,27 @@
 
     <div class="ai-explain">
       <div class="ai-explain-label">${t['ai.label']}</div>
+
       <p>${explanation}</p>
+
+      ${recommendation ? `
+        <div style="
+          margin-top:14px;
+          padding-top:12px;
+          border-top:1px solid rgba(76,126,255,.25);
+        ">
+          <strong>
+            ${currentLang === 'en'
+            ? 'BOB Recommendation'
+            : 'Recomendación de BOB'}:
+          </strong>
+
+          <p style="margin-top:7px;">
+            ${escapeHtml(recommendation)}
+          </p>
+        </div>
+      ` : ''}
+
       <div class="ai-note">${t['ai.note']}</div>
     </div>
 
@@ -4273,10 +4558,349 @@ Generado por el prototipo Alcy Legacy (IBM Bob 2.0 Hackathon).
       document.getElementById('toggleOff').className = 'toggle-opt' + (m === 'off' ? ' active-off' : '');
       document.getElementById('toggleOn').className = 'toggle-opt' + (m === 'on' ? ' active-on' : '');
     }
+    function renderGitHubArea() {
+      const area = document.getElementById('githubArea');
 
+      if (!area) return;
+
+      // Si no hay sesión iniciada, no mostramos controles de GitHub
+      if (!currentUser) {
+        area.innerHTML = '';
+        return;
+      }
+
+      // GitHub conectado
+      if (
+        githubConnection?.connected === true &&
+        githubConnection?.github?.username
+      ) {
+        const username = githubConnection.github.username;
+
+        area.innerHTML = `
+      <div class="user-chip">
+        <span>
+          GitHub ✓ @${escapeHtml(username)}
+        </span>
+
+        <span class="logout" id="githubDisconnectLink">
+          ${currentLang === 'en'
+            ? 'Disconnect'
+            : 'Desconectar'}
+        </span>
+      </div>
+    `;
+        const disconnectLink =
+          document.getElementById('githubDisconnectLink');
+
+        if (disconnectLink) {
+          disconnectLink.onclick = async () => {
+            await disconnectGitHub();
+          };
+        }
+        return;
+      }
+
+      // GitHub no conectado
+      area.innerHTML = `
+    <button
+      class="btn-ghost"
+      id="githubConnectBtn"
+      type="button"
+    >
+      ${currentLang === 'en'
+          ? 'Connect GitHub'
+          : 'Conectar GitHub'}
+    </button>
+  `;
+      const connectButton =
+        document.getElementById('githubConnectBtn');
+
+      if (connectButton) {
+        connectButton.onclick = async () => {
+          await connectGitHub();
+        };
+      }
+    }
+    async function connectGitHub() {
+      const token = localStorage.getItem(AUTH_TOKEN_KEY);
+
+      if (!token) {
+        alert(
+          currentLang === 'en'
+            ? 'Please sign in before connecting GitHub.'
+            : 'Inicia sesión antes de conectar GitHub.'
+        );
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/github/connect`,
+          {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+            data.message ||
+            'No se pudo iniciar la conexión con GitHub.'
+          );
+        }
+
+        if (!data.authorizationUrl) {
+          throw new Error(
+            currentLang === 'en'
+              ? 'GitHub authorization URL was not received.'
+              : 'No se recibió la URL de autorización de GitHub.'
+          );
+        }
+
+        // Enviar al usuario a GitHub OAuth
+        window.location.href = data.authorizationUrl;
+
+      } catch (error) {
+        console.error(
+          'Error conectando GitHub:',
+          error
+        );
+
+        alert(
+          error instanceof Error
+            ? error.message
+            : 'Error al conectar GitHub.'
+        );
+      }
+    }
+
+
+    async function disconnectGitHub() {
+      const token = localStorage.getItem(AUTH_TOKEN_KEY);
+
+      if (!token) return;
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/github/disconnect`,
+          {
+            method: 'DELETE',
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+            data.message ||
+            'No se pudo desconectar GitHub.'
+          );
+        }
+
+        githubConnection = null;
+
+        renderGitHubArea();
+
+        console.log(
+          'GitHub desconectado:',
+          data
+        );
+
+      } catch (error) {
+        console.error(
+          'Error desconectando GitHub:',
+          error
+        );
+
+        alert(
+          error instanceof Error
+            ? error.message
+            : 'Error al desconectar GitHub.'
+        );
+      }
+    }
+    async function checkGitHubConnection() {
+      const token = localStorage.getItem(AUTH_TOKEN_KEY);
+
+      if (!token) {
+        githubConnection = null;
+
+        return {
+          connected: false
+        };
+      }
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/github/status`,
+          {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+            data.message ||
+            'No se pudo consultar la conexión con GitHub.'
+          );
+        }
+
+        githubConnection = data;
+
+        renderGitHubArea();
+
+        console.log(
+          'Estado de GitHub:',
+          githubConnection
+        );
+        return githubConnection;
+
+      } catch (error) {
+        console.error(
+          'Error consultando GitHub:',
+          error
+        );
+
+        githubConnection = null;
+        renderGitHubArea();
+
+        return {
+          connected: false
+        };
+      }
+    }
+    async function createPullRequest() {
+      if (!currentJobId) {
+        alert(
+          currentLang === 'en'
+            ? 'No GitHub job is available.'
+            : 'No existe un trabajo de GitHub disponible.'
+        );
+        return;
+      }
+
+      const token = localStorage.getItem(AUTH_TOKEN_KEY);
+
+      if (!token) {
+        alert(
+          currentLang === 'en'
+            ? 'Your session has expired. Please sign in again.'
+            : 'Tu sesión ha expirado. Inicia sesión nuevamente.'
+        );
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/jobs/${currentJobId}/pull-request`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        const data = await response.json();
+
+        console.log('Resultado Pull Request:', data);
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+            data.message ||
+            (
+              currentLang === 'en'
+                ? 'Could not create the Pull Request.'
+                : 'No se pudo crear el Pull Request.'
+            )
+          );
+        }
+
+        // ==========================================
+        // CASO 1: GitHub creó el PR automáticamente
+        // ==========================================
+
+        if (
+          data.pullRequest?.url &&
+          data.pullRequest?.created !== false
+        ) {
+          currentPullRequestUrl = data.pullRequest.url;
+          currentPullRequestRequiresConfirmation = false;
+
+          window.open(
+            currentPullRequestUrl,
+            '_blank',
+            'noopener,noreferrer'
+          );
+
+          return data;
+        }
+
+        // ==========================================
+        // CASO 2: GitHub requiere confirmación
+        // ==========================================
+
+        if (
+          data.requiresGitHubConfirmation === true &&
+          data.pullRequest?.compareUrl
+        ) {
+          currentPullRequestUrl = data.pullRequest.compareUrl;
+          currentPullRequestRequiresConfirmation = true;
+
+          window.open(
+            currentPullRequestUrl,
+            '_blank',
+            'noopener,noreferrer'
+          );
+
+          return data;
+        }
+
+        throw new Error(
+          currentLang === 'en'
+            ? 'GitHub did not return a Pull Request URL.'
+            : 'GitHub no devolvió una URL para el Pull Request.'
+        );
+
+      } catch (error) {
+        console.error(
+          'Error creando Pull Request:',
+          error
+        );
+
+        alert(
+          error instanceof Error
+            ? error.message
+            : (
+              currentLang === 'en'
+                ? 'Unexpected error creating the Pull Request.'
+                : 'Error inesperado al crear el Pull Request.'
+            )
+        );
+
+        return null;
+      }
+    }
     document.getElementById('changeBtn').onclick = () => runChange();
 
-    function runChange() {
+    async function runChange() {
       if (!analysisComplete || !currentAnalyzed) return;
       const f = currentAnalyzed;
       const isEnC = currentLang === 'en';
@@ -4284,33 +4908,426 @@ Generado por el prototipo Alcy Legacy (IBM Bob 2.0 Hackathon).
       const c = document.getElementById('console');
       c.innerHTML = '';
       const lines = [];
+      let realRefactorSuccess = false;
+      // =====================================================
+      // DETERMINAR ORIGEN DEL ARCHIVO
+      // =====================================================
+
+      let refactorFilePath = f.name;
+      let refactorOriginalCode = null;
+      let isLocalRefactor = false;
+
+      if (mode === 'real' && scope === 'file') {
+        isLocalRefactor = true;
+
+        refactorFilePath =
+          targetFile.name || f.name;
+
+        refactorOriginalCode =
+          targetFile.content;
+      }
+
+      if (mode === 'real' && scope === 'folder') {
+        const selectedIndex =
+          document.getElementById('folderTargetSelect').value;
+
+        if (
+          selectedIndex !== '' &&
+          folderAllFiles[parseInt(selectedIndex)]
+        ) {
+          const selectedFile =
+            folderAllFiles[parseInt(selectedIndex)];
+
+          isLocalRefactor = true;
+
+          refactorFilePath =
+            selectedFile.path || selectedFile.name;
+
+          refactorOriginalCode =
+            selectedFile.content;
+        }
+      }
+
+      const token =
+        localStorage.getItem(AUTH_TOKEN_KEY);
 
       lines.push({ text: `$ bob run "${changeDesc}" --target ${f.name}`, cls: 'blue-line' });
 
       if (guardianMode === 'off') {
-        lines.push({ text: isEnC ? `> Bob generating a direct change in ${f.name}...` : `> Bob generando cambio directo en ${f.name}...`, cls: 'muted-line' });
-        lines.push({ text: isEnC ? `> Change applied.` : `> Cambio aplicado.`, cls: 'ok-line' });
-        if (f.risk !== 'low') {
-          lines.push({ text: isEnC ? `> Running the project's test suite...` : `> Ejecutando suite de tests del proyecto...`, cls: 'muted-line' });
-          lines.push({ text: isEnC ? `✗ FAIL: ${f.deps[0] || 'dependent file'} — unexpected behavior detected` : `✗ FAIL: ${f.deps[0] || 'archivo dependiente'} — comportamiento inesperado detectado`, cls: 'err-line' });
-          lines.push({ text: isEnC ? `✗ No one was alerted before deploy. Risk was never evaluated.` : `✗ Nadie fue alertado antes del deploy. El riesgo no se evaluó.`, cls: 'err-line' });
+
+        if (!isLocalRefactor && !currentJobId) {
+          lines.push({
+            text: isEnC
+              ? '✗ No repository job is available. Load and analyze the repository first.'
+              : '✗ No existe un trabajo disponible. Carga y analiza el repositorio primero.',
+            cls: 'err-line'
+          });
+
         } else {
-          lines.push({ text: isEnC ? `✓ No dependents affected. Low-risk change.` : `✓ Sin dependientes afectados. Cambio de bajo riesgo.`, cls: 'ok-line' });
+
+          if (!token) {
+            lines.push({
+              text: isEnC
+                ? '✗ Your session has expired. Please sign in again.'
+                : '✗ Tu sesión ha expirado. Inicia sesión nuevamente.',
+              cls: 'err-line'
+            });
+
+          } else {
+
+            lines.push({
+              text: isEnC
+                ? `> Sending direct change to BOB for ${f.name}...`
+                : `> Enviando cambio directo a BOB para ${f.name}...`,
+              cls: 'muted-line'
+            });
+
+            try {
+
+              const refactorUrl = isLocalRefactor
+                ? `${API_BASE_URL}/bob/refactor`
+                : `${API_BASE_URL}/jobs/${currentJobId}/refactor`;
+
+              const refactorBody = isLocalRefactor
+                ? {
+                  filePath: refactorFilePath,
+                  originalCode: refactorOriginalCode,
+                  customInstructions: changeDesc,
+                  riskScore: f.score ?? 0
+                }
+                : {
+                  customInstructions: changeDesc
+                };
+
+              const refactorResponse = await fetch(
+                refactorUrl,
+                {
+                  method: 'POST',
+
+                  headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                  },
+
+                  body: JSON.stringify(refactorBody)
+                }
+              );
+
+              const refactorData = await refactorResponse.json();
+
+              if (!refactorResponse.ok) {
+
+                if (refactorResponse.status === 401) {
+                  localStorage.removeItem(AUTH_TOKEN_KEY);
+                }
+
+                throw new Error(
+                  refactorData.error ||
+                  (
+                    isEnC
+                      ? 'BOB could not complete the direct change.'
+                      : 'BOB no pudo completar el cambio directo.'
+                  )
+                );
+              }
+
+              const result = refactorData.refactor;
+
+              if (!result) {
+                throw new Error(
+                  isEnC
+                    ? 'The API did not return the refactoring result.'
+                    : 'La API no devolvió el resultado de la refactorización.'
+                );
+              }
+
+              console.log(
+                'Resultado real de BOB en modo A CIEGAS:',
+                refactorData
+              );
+
+              realRefactorSuccess = true;
+
+              window.__lastRefactorResult = result;
+
+              lines.push({
+                text: isEnC
+                  ? '✓ BOB generated the direct change.'
+                  : '✓ BOB generó el cambio directo.',
+                cls: 'ok-line'
+              });
+
+              if (
+                Array.isArray(result.changesSummary) &&
+                result.changesSummary.length > 0
+              ) {
+
+                lines.push({
+                  text: isEnC
+                    ? '> Changes generated:'
+                    : '> Cambios generados:',
+                  cls: 'blue-line'
+                });
+
+                result.changesSummary.forEach(change => {
+                  lines.push({
+                    text: `  • ${change}`,
+                    cls: 'muted-line'
+                  });
+                });
+              }
+
+              if (
+                typeof result.refactoredCode === 'string' &&
+                result.refactoredCode.trim()
+              ) {
+                lines.push({
+                  text: isEnC
+                    ? '✓ Refactored source code received.'
+                    : '✓ Código refactorizado recibido.',
+                  cls: 'ok-line'
+                });
+              }
+
+              if (
+                typeof result.generatedTests === 'string' &&
+                result.generatedTests.trim()
+              ) {
+                lines.push({
+                  text: isEnC
+                    ? '✓ BOB generated tests for the proposed change.'
+                    : '✓ BOB generó tests para el cambio propuesto.',
+                  cls: 'ok-line'
+                });
+              }
+
+              if (
+                typeof result.diff === 'string' &&
+                result.diff.trim()
+              ) {
+                lines.push({
+                  text: isEnC
+                    ? '✓ Change diff generated.'
+                    : '✓ Diff del cambio generado.',
+                  cls: 'ok-line'
+                });
+              }
+
+            } catch (error) {
+
+              console.error(
+                'Error ejecutando BOB en modo A CIEGAS:',
+                error
+              );
+
+              lines.push({
+                text:
+                  `✗ ${error instanceof Error
+                    ? error.message
+                    : (
+                      isEnC
+                        ? 'Unexpected error during direct change.'
+                        : 'Error inesperado durante el cambio directo.'
+                    )
+                  }`,
+                cls: 'err-line'
+              });
+            }
+          }
         }
+
       } else {
-        lines.push({ text: isEnC ? `> Alcy Legacy intercepting before execution...` : `> Alcy Legacy interceptando antes de ejecutar...`, cls: 'blue-line' });
-        lines.push({ text: `> Risk score: ${riskLabel(f.risk)}`, cls: f.risk === 'high' ? 'err-line' : f.risk === 'medium' ? 'warn-line' : 'ok-line' });
-        if (f.risk === 'high') {
-          lines.push({ text: isEnC ? `⚠ Blocked: not enough tests and ${f.deps.length} dependents detected.` : `⚠ Bloqueado: sin tests suficientes y ${f.deps.length} dependientes detectados.`, cls: 'warn-line' });
-          lines.push({ text: isEnC ? `> Generating suggested minimal tests...` : `> Generando tests mínimos sugeridos...`, cls: 'muted-line' });
-          lines.push({ text: isEnC ? `✓ Minimal tests created and run: 3/3 passed` : `✓ Tests mínimos creados y ejecutados: 3/3 passed`, cls: 'ok-line' });
-          lines.push({ text: isEnC ? `> Retrying the change, now protected by tests...` : `> Reintentando cambio ahora protegido por tests...`, cls: 'muted-line' });
-          lines.push({ text: isEnC ? `✓ Change applied. All dependents verified.` : `✓ Cambio aplicado. Todos los dependientes verificados.`, cls: 'ok-line' });
-        } else if (f.risk === 'medium') {
-          lines.push({ text: isEnC ? `⚠ Warning: moderate risk. Manual review recommended.` : `⚠ Advertencia: riesgo moderado. Se recomienda revisión manual.`, cls: 'warn-line' });
-          lines.push({ text: isEnC ? `✓ Change applied with a warning logged in the report.` : `✓ Cambio aplicado con advertencia registrada en el reporte.`, cls: 'ok-line' });
+        if (!isLocalRefactor && !currentJobId) {
+          lines.push({
+            text: isEnC
+              ? '✗ No analysis job is available. Analyze the repository first.'
+              : '✗ No existe un trabajo de análisis disponible. Analiza el repositorio primero.',
+            cls: 'err-line'
+          });
         } else {
-          lines.push({ text: isEnC ? `✓ Low risk. Change applied with no extra friction.` : `✓ Riesgo bajo. Cambio aplicado sin fricción adicional.`, cls: 'ok-line' });
+          const token = localStorage.getItem(AUTH_TOKEN_KEY);
+
+          if (!token) {
+            lines.push({
+              text: isEnC
+                ? '✗ Your session has expired. Please sign in again.'
+                : '✗ Tu sesión ha expirado. Inicia sesión nuevamente.',
+              cls: 'err-line'
+            });
+          } else {
+            lines.push({
+              text: isEnC
+                ? '> Alcy Legacy intercepted the change before execution.'
+                : '> Alcy Legacy interceptó el cambio antes de ejecutarlo.',
+              cls: 'blue-line'
+            });
+
+            lines.push({
+              text: isEnC
+                ? `> Previous risk: ${f.score ?? 0}/100 (${riskLabel(f.risk)})`
+                : `> Riesgo previo: ${f.score ?? 0}/100 (${riskLabel(f.risk)})`,
+              cls:
+                f.risk === 'high'
+                  ? 'err-line'
+                  : f.risk === 'medium'
+                    ? 'warn-line'
+                    : 'ok-line'
+            });
+
+            lines.push({
+              text: isEnC
+                ? '> Sending refactoring request to BOB...'
+                : '> Enviando solicitud de refactorización a BOB...',
+              cls: 'muted-line'
+            });
+
+            try {
+              const refactorUrl = isLocalRefactor
+                ? `${API_BASE_URL}/bob/refactor`
+                : `${API_BASE_URL}/jobs/${currentJobId}/refactor`;
+
+              const refactorBody = isLocalRefactor
+                ? {
+                  filePath: refactorFilePath,
+                  originalCode: refactorOriginalCode,
+                  customInstructions: changeDesc,
+                  riskScore: f.score ?? 0
+                }
+                : {
+                  customInstructions: changeDesc
+                };
+
+              const refactorResponse = await fetch(
+                refactorUrl,
+                {
+                  method: 'POST',
+
+                  headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                  },
+
+                  body: JSON.stringify(refactorBody)
+                }
+              );
+
+              const refactorData =
+                await refactorResponse.json();
+
+              if (!refactorResponse.ok) {
+                if (refactorResponse.status === 401) {
+                  localStorage.removeItem(AUTH_TOKEN_KEY);
+                }
+
+                throw new Error(
+                  refactorData.error ||
+                  (isEnC
+                    ? 'BOB could not complete the refactoring.'
+                    : 'BOB no pudo completar la refactorización.')
+                );
+              }
+
+              const result = refactorData.refactor;
+
+              if (!result) {
+                throw new Error(
+                  isEnC
+                    ? 'The API did not return the refactoring result.'
+                    : 'La API no devolvió el resultado de la refactorización.'
+                );
+              }
+
+              console.log(
+                'Resultado real del refactor de BOB:',
+                refactorData
+              );
+
+              realRefactorSuccess = true;
+
+              window.__lastRefactorResult = result;
+
+              lines.push({
+                text: isEnC
+                  ? '✓ BOB completed the refactoring.'
+                  : '✓ BOB completó la refactorización.',
+                cls: 'ok-line'
+              });
+
+              if (
+                Array.isArray(result.changesSummary) &&
+                result.changesSummary.length > 0
+              ) {
+                lines.push({
+                  text: isEnC
+                    ? '> Changes generated:'
+                    : '> Cambios generados:',
+                  cls: 'blue-line'
+                });
+
+                result.changesSummary.forEach(change => {
+                  lines.push({
+                    text: `  • ${change}`,
+                    cls: 'muted-line'
+                  });
+                });
+              }
+
+              if (
+                typeof result.refactoredCode === 'string' &&
+                result.refactoredCode.trim()
+              ) {
+                lines.push({
+                  text: isEnC
+                    ? '✓ Refactored source code received.'
+                    : '✓ Código fuente refactorizado recibido.',
+                  cls: 'ok-line'
+                });
+              }
+
+              if (
+                typeof result.generatedTests === 'string' &&
+                result.generatedTests.trim()
+              ) {
+                lines.push({
+                  text: isEnC
+                    ? '✓ BOB generated tests for the proposed refactoring.'
+                    : '✓ BOB generó tests para la refactorización propuesta.',
+                  cls: 'ok-line'
+                });
+              }
+
+              if (
+                typeof result.diff === 'string' &&
+                result.diff.trim()
+              ) {
+                lines.push({
+                  text: isEnC
+                    ? '✓ Refactoring diff generated.'
+                    : '✓ Diff de refactorización generado.',
+                  cls: 'ok-line'
+                });
+              }
+
+            } catch (error) {
+              console.error(
+                'Error ejecutando refactor:',
+                error
+              );
+
+              lines.push({
+                text:
+                  `✗ ${error instanceof Error
+                    ? error.message
+                    : (
+                      isEnC
+                        ? 'Unexpected refactoring error.'
+                        : 'Error inesperado durante la refactorización.'
+                    )
+                  }`,
+                cls: 'err-line'
+              });
+            }
+          }
         }
       }
 
@@ -4323,13 +5340,208 @@ Generado por el prototipo Alcy Legacy (IBM Bob 2.0 Hackathon).
       });
 
       const banner = document.createElement('div');
-      const failed = (guardianMode === 'off' && f.risk !== 'low');
-      banner.className = 'result-banner ' + (failed ? 'fail' : 'pass');
-      banner.style.animationDelay = (lines.length * 0.35 + 0.2) + 's';
-      banner.innerHTML = failed
-        ? (isEnC ? `<span>✗</span> Result: the change broke dependent code with no prior warning.` : `<span>✗</span> Resultado: cambio rompió código dependiente sin previo aviso.`)
-        : (isEnC ? `<span>✓</span> Result: change protected, no dependents broke.` : `<span>✓</span> Resultado: cambio protegido, ningún dependiente se rompió.`);
+
+      let bannerFailed = false;
+      let bannerMessage = '';
+
+      if (guardianMode === 'off') {
+        bannerFailed = !realRefactorSuccess;
+
+        bannerMessage = realRefactorSuccess
+          ? (
+            isEnC
+              ? '<span>✓</span> Result: BOB generated the change directly without Legacy Guardian risk protection.'
+              : '<span>✓</span> Resultado: BOB generó el cambio directamente sin la protección de riesgo de Legacy Guardian.'
+          )
+          : (
+            isEnC
+              ? '<span>✗</span> Result: BOB could not complete the direct change.'
+              : '<span>✗</span> Resultado: BOB no pudo completar el cambio directo.'
+          );
+
+      } else {
+        bannerFailed = !realRefactorSuccess;
+
+        bannerMessage = realRefactorSuccess
+          ? (
+            isEnC
+              ? '<span>✓</span> Result: BOB generated the protected refactoring proposal.'
+              : '<span>✓</span> Resultado: BOB generó la propuesta de refactorización protegida.'
+          )
+          : (
+            isEnC
+              ? '<span>✗</span> Result: the refactoring could not be completed.'
+              : '<span>✗</span> Resultado: no se pudo completar la refactorización.'
+          );
+      }
+
+      banner.className =
+        'result-banner ' +
+        (bannerFailed ? 'fail' : 'pass');
+
+      banner.style.animationDelay =
+        (lines.length * 0.35 + 0.2) + 's';
+
+      banner.innerHTML = bannerMessage;
+
       c.appendChild(banner);
+
+      /* =========================================================
+   DESCARGAR ARCHIVO REFACTORIZADO
+   ========================================================= */
+
+      if (realRefactorSuccess && window.__lastRefactorResult) {
+
+        const result = window.__lastRefactorResult;
+
+        if (
+          typeof result.refactoredCode === 'string' &&
+          result.refactoredCode.trim()
+        ) {
+
+          const downloadContainer =
+            document.createElement('div');
+
+          downloadContainer.style.marginTop = '20px';
+
+
+          const downloadButton =
+            document.createElement('button');
+
+          downloadButton.type = 'button';
+
+          downloadButton.textContent = isEnC
+            ? '↓ DOWNLOAD REFACTORED FILE'
+            : '↓ DESCARGAR ARCHIVO REFACTORIZADO';
+
+          downloadButton.style.padding = '12px 18px';
+          downloadButton.style.cursor = 'pointer';
+          downloadButton.style.fontFamily = 'inherit';
+          downloadButton.style.fontWeight = 'bold';
+
+
+          downloadButton.onclick = () => {
+
+            const blob = new Blob(
+              [result.refactoredCode],
+              {
+                type: 'text/plain;charset=utf-8'
+              }
+            );
+
+            const url =
+              URL.createObjectURL(blob);
+
+            const link =
+              document.createElement('a');
+
+            link.href = url;
+
+            /*
+             * Mantiene el nombre original:
+             * calculadora.py -> calculadora.py
+             */
+            link.download =
+              refactorFilePath || f.name || 'archivo_refactorizado.txt';
+
+            document.body.appendChild(link);
+
+            link.click();
+
+            document.body.removeChild(link);
+
+            URL.revokeObjectURL(url);
+          };
+
+
+          downloadContainer.appendChild(
+            downloadButton
+          );
+
+          /* =========================================================
+             CREAR PULL REQUEST — SOLO PROYECTOS GITHUB
+             ========================================================= */
+
+          if (
+            scope === 'github' &&
+            currentJobId
+          ) {
+            const pullRequestButton =
+              document.createElement('button');
+
+            pullRequestButton.type = 'button';
+
+            pullRequestButton.textContent = isEnC
+              ? '↗ CREATE PULL REQUEST'
+              : '↗ CREAR PULL REQUEST';
+
+            pullRequestButton.style.padding = '12px 18px';
+            pullRequestButton.style.cursor = 'pointer';
+            pullRequestButton.style.fontFamily = 'inherit';
+            pullRequestButton.style.fontWeight = 'bold';
+            pullRequestButton.style.marginLeft = '10px';
+
+            pullRequestButton.onclick = async () => {
+
+              pullRequestButton.disabled = true;
+
+              pullRequestButton.textContent = isEnC
+                ? 'CREATING PULL REQUEST...'
+                : 'CREANDO PULL REQUEST...';
+
+              const pullRequestResult =
+                await createPullRequest();
+
+              if (!pullRequestResult) {
+                pullRequestButton.disabled = false;
+
+                pullRequestButton.textContent = isEnC
+                  ? '↗ CREATE PULL REQUEST'
+                  : '↗ CREAR PULL REQUEST';
+
+                return;
+              }
+
+              if (
+                pullRequestResult.requiresGitHubConfirmation === true
+              ) {
+                pullRequestButton.textContent = isEnC
+                  ? '↗ CONTINUE ON GITHUB'
+                  : '↗ CONTINUAR EN GITHUB';
+              } else {
+                pullRequestButton.textContent = isEnC
+                  ? '✓ VIEW PULL REQUEST'
+                  : '✓ VER PULL REQUEST';
+              }
+
+              pullRequestButton.disabled = false;
+
+              /*
+               * Después del primer intento ya tenemos la URL.
+               * Los siguientes clics simplemente vuelven a abrir GitHub,
+               * evitando crear otra rama o PR.
+               */
+              pullRequestButton.onclick = () => {
+                if (currentPullRequestUrl) {
+                  window.open(
+                    currentPullRequestUrl,
+                    '_blank',
+                    'noopener,noreferrer'
+                  );
+                }
+              };
+            };
+
+            downloadContainer.appendChild(
+              pullRequestButton
+            );
+          }
+
+          c.appendChild(
+            downloadContainer
+          );
+        }
+      }
 
       const hint = document.createElement('div');
       hint.className = 'hint';
@@ -4341,6 +5553,7 @@ Generado por el prototipo Alcy Legacy (IBM Bob 2.0 Hackathon).
 
     applyI18n();
     renderAuthArea();
+    renderGitHubArea();
     selectDemoFile('legacy_module');
 
     /* ---------------- NAV TABS (Demo / Analizar / Documentación / API) — topbar + footer ---------------- */
