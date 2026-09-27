@@ -7,7 +7,8 @@ import { env } from "./config/env.js";
 import healthRoutes from "./routes/health.routes.js";
 import authRoutes from "./routes/auth.routes.js";
 import repositoryRoutes from "./routes/repository.routes.js";
-
+import bobRoutes from "./routes/bob.routes.js";
+import githubRoutes from "./routes/github.routes.js";
 const app = express();
 
 app.disable("x-powered-by");
@@ -61,7 +62,9 @@ app.use("/api/v1/repositories",repositoryRoutes);
 
 app.use("/api/v1/jobs",jobRoutes);
 
+app.use("/api/v1/bob", bobRoutes);
 
+app.use("/api/v1/github", githubRoutes);
 app.use((_req, res) => {
   res.status(404).json({
     success: false,

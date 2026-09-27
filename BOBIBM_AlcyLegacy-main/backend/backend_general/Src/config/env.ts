@@ -48,6 +48,38 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z
     .string()
     .min(1, "GOOGLE_CLIENT_ID es obligatorio"),
+
+  // =========================
+  // GitHub App
+  // =========================
+  GITHUB_CLIENT_ID: z
+    .string()
+    .min(1, "GITHUB_CLIENT_ID es obligatorio"),
+
+  GITHUB_CLIENT_SECRET: z
+    .string()
+    .min(1, "GITHUB_CLIENT_SECRET es obligatorio"),
+
+  GITHUB_CALLBACK_URL: z
+    .string()
+    .url("GITHUB_CALLBACK_URL debe ser una URL válida"),
+
+  // =========================
+  // BOB Backend AI
+  // =========================
+  BOB_AI_URL: z
+    .string()
+    .url("BOB_AI_URL debe ser una URL válida"),
+
+  BOB_INTERNAL_SECRET: z
+    .string()
+    .min(1, "BOB_INTERNAL_SECRET es obligatorio"),
+  GITHUB_TOKEN_ENCRYPTION_KEY: z
+    .string()
+    .regex(
+      /^[a-fA-F0-9]{64}$/,
+      "GITHUB_TOKEN_ENCRYPTION_KEY debe contener 64 caracteres hexadecimales"
+    ),
 });
 
 const result = envSchema.safeParse(process.env);
