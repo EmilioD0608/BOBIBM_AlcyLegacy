@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
 
-import { ApiService } from '../services/api';
+import {
+  ApiService,
+  ApiError
+} from '../services/api';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -109,20 +112,75 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
       onClose();
 
-    } catch (error) {
-      console.error(
-        'Error de autenticación:',
-        error
-      );
+    } catch (error: unknown) {
 
-      const message =
-        error instanceof Error
-          ? error.message
-          : (
+      // Los detalles técnicos solo se muestran durante desarrollo
+      if (import.meta.env.DEV) {
+        console.error(
+          'Error de autenticación:',
+          error
+        );
+      }
+
+      let message =
+        lang === 'es'
+          ? 'Ocurrió un error inesperado.'
+          : 'An unexpected error occurred.';
+
+      if (error instanceof ApiError) {
+
+        switch (error.code) {
+
+          case 'INVALID_CREDENTIALS':
+            message =
               lang === 'es'
-                ? 'Ocurrió un error inesperado.'
-                : 'An unexpected error occurred.'
-            );
+                ? 'Correo o contraseña incorrectos.'
+                : 'Incorrect email or password.';
+            break;
+
+          case 'EMAIL_ALREADY_EXISTS':
+            message =
+              lang === 'es'
+                ? 'Ya existe una cuenta con ese correo.'
+                : 'An account with that email already exists.';
+            break;
+
+          case 'INVALID_INPUT':
+            message =
+              lang === 'es'
+                ? 'Revisa los datos ingresados.'
+                : 'Please check the information entered.';
+            break;
+
+          case 'AUTH_REQUIRED':
+            message =
+              lang === 'es'
+                ? 'Tu sesión no es válida. Inicia sesión nuevamente.'
+                : 'Your session is invalid. Please sign in again.';
+            break;
+
+          case 'NETWORK_ERROR':
+            message =
+              lang === 'es'
+                ? 'No se pudo conectar con el servidor.'
+                : 'Could not connect to the server.';
+            break;
+
+          case 'INVALID_API_RESPONSE':
+            message =
+              lang === 'es'
+                ? 'El servidor devolvió una respuesta no válida.'
+                : 'The server returned an invalid response.';
+            break;
+
+          case 'SERVER_ERROR':
+            message =
+              lang === 'es'
+                ? 'El servidor no pudo procesar la solicitud.'
+                : 'The server could not process the request.';
+            break;
+        }
+      }
 
       setErrorMessage(message);
 
@@ -189,15 +247,15 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
           {isRegister
             ? (
-                lang === 'es'
-                  ? 'Crear Cuenta — Alcy Legacy'
-                  : 'Create Account — Alcy Legacy'
-              )
+              lang === 'es'
+                ? 'Crear Cuenta — Alcy Legacy'
+                : 'Create Account — Alcy Legacy'
+            )
             : (
-                lang === 'es'
-                  ? 'Iniciar Sesión'
-                  : 'Sign In'
-              )}
+              lang === 'es'
+                ? 'Iniciar Sesión'
+                : 'Sign In'
+            )}
 
         </h3>
 
@@ -340,21 +398,21 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
             {loading
               ? (
-                  lang === 'es'
-                    ? 'Procesando...'
-                    : 'Processing...'
-                )
+                lang === 'es'
+                  ? 'Procesando...'
+                  : 'Processing...'
+              )
               : isRegister
                 ? (
-                    lang === 'es'
-                      ? 'Registrarse'
-                      : 'Register'
-                  )
+                  lang === 'es'
+                    ? 'Registrarse'
+                    : 'Register'
+                )
                 : (
-                    lang === 'es'
-                      ? 'Ingresar'
-                      : 'Sign In'
-                  )}
+                  lang === 'es'
+                    ? 'Ingresar'
+                    : 'Sign In'
+                )}
 
           </button>
 
@@ -422,15 +480,15 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
           {isRegister
             ? (
-                lang === 'es'
-                  ? '¿Ya tienes cuenta?'
-                  : 'Already have an account?'
-              )
+              lang === 'es'
+                ? '¿Ya tienes cuenta?'
+                : 'Already have an account?'
+            )
             : (
-                lang === 'es'
-                  ? '¿No tienes cuenta?'
-                  : "Don't have an account?"
-              )}{' '}
+              lang === 'es'
+                ? '¿No tienes cuenta?'
+                : "Don't have an account?"
+            )}{' '}
 
           <button
             type="button"
@@ -441,15 +499,15 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
             {isRegister
               ? (
-                  lang === 'es'
-                    ? 'Inicia sesión'
-                    : 'Sign In'
-                )
+                lang === 'es'
+                  ? 'Inicia sesión'
+                  : 'Sign In'
+              )
               : (
-                  lang === 'es'
-                    ? 'Regístrate'
-                    : 'Register'
-                )}
+                lang === 'es'
+                  ? 'Regístrate'
+                  : 'Register'
+              )}
 
           </button>
 

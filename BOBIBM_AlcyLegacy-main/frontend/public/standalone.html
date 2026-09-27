@@ -1319,7 +1319,7 @@ Object.entries(FILES).forEach(([key, f]) => {
   const chip = document.createElement('div');
   chip.className = 'file-chip';
   chip.dataset.key = key;
-  chip.innerHTML = `<span class="dot"></span>${f.name}`;
+  chip.innerHTML = `<span class="dot"></span>${escapeHtml(f.name)}`;
   chip.onclick = () => selectDemoFile(key);
   fileRow.appendChild(chip);
 });
@@ -1746,11 +1746,11 @@ function renderAnalysis(data){
       </div>
     </div>
 
-    <div class="reason-box"><b>${t['reason.title']}</b><ul>${reasons.map(r => `<li>${r}</li>`).join('')}</ul></div>
+    <div class="reason-box"><b>${t['reason.title']}</b><ul>${reasons.map(r => `<li>${escapeHtml(String(r))}</li>`).join('')}</ul></div>
 
     <div class="ai-explain">
       <div class="ai-explain-label">${t['ai.label']}</div>
-      <p>${explanation}</p>
+      <p>${escapeHtml(String(explanation || ''))}</p>
       <div class="ai-note">${t['ai.note']}</div>
     </div>
 
