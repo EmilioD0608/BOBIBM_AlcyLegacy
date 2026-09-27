@@ -51,7 +51,7 @@ El proyecto está dividido en un **Frontend** y dos APIs independientes:
 ┌───────────────────────────────┐
 │           FRONTEND            │
 │    HTML • CSS • JavaScript    │
-│                               │
+│        •  Typescript          │
 │        Legacy Guardian        │
 └───────────────┬───────────────┘
                 │ HTTP
